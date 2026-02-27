@@ -86,30 +86,18 @@ and analyzes tremor frequency & rhythmic stability.
 
 class TremorProcessor(VideoProcessorBase):
 
-
-
     def __init__(self):
-
         self.mp_hands = mp.solutions.hands
-
         self.hands = self.mp_hands.Hands(
-
             max_num_hands=1,
-
             min_detection_confidence=0.7,
-
             min_tracking_confidence=0.7
-
         )
 
         self.timestamps = deque()
-
         self.positions = deque()
         self.magnitudes = deque()
-
         self.freq_history = deque(maxlen=STABILITY_HISTORY)
-
-
 
     def compute_tremor_frequency(self):
 
@@ -118,14 +106,13 @@ class TremorProcessor(VideoProcessorBase):
 
         signal = np.array(self.magnitudes)
 
-    # Smooth signal
+        # Smooth
         if len(signal) > SMOOTHING_WINDOW:
             kernel = np.ones(SMOOTHING_WINDOW) / SMOOTHING_WINDOW
             signal = np.convolve(signal, kernel, mode='valid')
 
-    # Motion gate
-        avg_motion = np.mean(signal)
-        if avg_motion < MOTION_THRESHOLD:
+        # Motion threshold
+        if np.mean(signal) < MOTION_THRESHOLD:
             return None, None
 
         time_array = np.array(self.timestamps)[-len(signal):]
@@ -157,112 +144,73 @@ class TremorProcessor(VideoProcessorBase):
 
         return dominant_freq, power
 
-    
     def compute_stability(self):
 
         if len(self.freq_history) < STABILITY_HISTORY:
-
             return 0
 
         std_dev = np.std(self.freq_history)
-
         return max(0, 1 - (std_dev / 2))
 
+    def compute_risk(self, freq, power, stability):
 
+        if freq is None:
+            return 0
 
-def compute_risk(self, freq, power, stability):
+        freq_score = 1 if 4 <= freq <= 6 else 0.3
+        power_score = min(power / 80, 1)
 
-    if freq is None:
-        return 0
+        total_score = (
+            (freq_score * 0.5) +
+            (power_score * 0.3) +
+            (stability * 0.2)
+        )
 
-    # Parkinson tremor typical band: 4–6 Hz
-    freq_score = 1 if 4 <= freq <= 6 else 0.3
+        risk = round(total_score * 100, 1)
 
-    # Normalize power
-    power_score = min(power / 80, 1)
+        if risk < 40:
+            return 0
 
-    total_score = (
-        (freq_score * 0.5) +
-        (power_score * 0.3) +
-        (stability * 0.2)
-    )
-
-    risk = round(total_score * 100, 1)
-
-    # Final safety gate
-    if risk < 40:
-        return 0
-
-    return risk
-
+        return risk
 
     def recv(self, frame):
 
         img = frame.to_ndarray(format="bgr24")
-
         img = cv2.flip(img, 1)
-
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-
-
         results = self.hands.process(rgb)
-
         current_time = time.time()
 
-
-
         if results.multi_hand_landmarks:
-
             for hand_landmarks in results.multi_hand_landmarks:
 
                 h, w, _ = img.shape
 
-
-
-                # Draw edges
-
+                # Draw skeleton
                 for connection in self.mp_hands.HAND_CONNECTIONS:
-
                     start_idx, end_idx = connection
-
                     x1 = int(hand_landmarks.landmark[start_idx].x * w)
-
                     y1 = int(hand_landmarks.landmark[start_idx].y * h)
-
                     x2 = int(hand_landmarks.landmark[end_idx].x * w)
-
                     y2 = int(hand_landmarks.landmark[end_idx].y * h)
-
                     cv2.line(img, (x1, y1), (x2, y2), (0, 255, 180), 2)
 
-
-
-                # Draw vertices
-
-                for idx, lm in enumerate(hand_landmarks.landmark):
-
+                # Draw points
+                for lm in hand_landmarks.landmark:
                     x = int(lm.x * w)
-
                     y = int(lm.y * h)
-
                     cv2.circle(img, (x, y), 5, (0, 255, 255), -1)
 
-
-
-                # Track index fingertip
-
+                # Track index tip
                 index_tip = hand_landmarks.landmark[8]
-
                 x = int(index_tip.x * w)
-
                 y = int(index_tip.y * h)
 
                 cv2.circle(img, (x, y), 10, (255, 255, 0), -1)
 
-
-
                 self.positions.append((x, y))
+                self.timestamps.append(current_time)
 
                 if len(self.positions) > 1:
                     dx = self.positions[-1][0] - self.positions[-2][0]
@@ -270,80 +218,48 @@ def compute_risk(self, freq, power, stability):
                     magnitude = np.sqrt(dx**2 + dy**2)
                     self.magnitudes.append(magnitude)
 
-                self.timestamps.append(current_time)
-
-
-
-        # Maintain sliding window
-
+        # Sliding window cleanup
         while self.timestamps and (current_time - self.timestamps[0]) > WINDOW_DURATION:
-
             self.timestamps.popleft()
+            if self.positions:
+                self.positions.popleft()
+            if self.magnitudes:
+                self.magnitudes.popleft()
 
-            self.positions.popleft()
-
-
-
-        freq, amplitude = self.compute_tremor_frequency()
-
-
+        freq, power = self.compute_tremor_frequency()
 
         if freq:
-
             self.freq_history.append(freq)
 
-
-
         stability = self.compute_stability()
+        risk = self.compute_risk(freq, power if power else 0, stability)
 
-        risk = self.compute_risk(freq, amplitude if amplitude else 0, stability)
-
-
-
-        # Futuristic Panel
-
+        # Overlay
         overlay = img.copy()
-
         cv2.rectangle(overlay, (20, 20), (480, 240), (20, 20, 20), -1)
-
         cv2.addWeighted(overlay, 0.85, img, 0.15, 0, img)
-
-
 
         neon = (0, 255, 200)
 
         cv2.putText(img, "NEUROSCAN AI", (40, 50),
-
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, neon, 2)
 
-
-
         freq_text = f"Frequency: {freq:.2f} Hz" if freq else "Frequency: --"
-
-        amp_text = f"Amplitude: {amplitude:.2f}" if amplitude else "Amplitude: --"
-
-
+        amp_text = f"Amplitude: {power:.2f}" if power else "Amplitude: --"
 
         cv2.putText(img, freq_text, (40, 100),
-
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,255,255), 1)
 
         cv2.putText(img, amp_text, (40, 130),
-
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,255,255), 1)
 
         cv2.putText(img, f"Stability: {round(stability,2)}", (40, 160),
-
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,255,255), 1)
 
         cv2.putText(img, f"Risk Index: {risk}%", (40, 200),
-
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, neon, 2)
 
-
-
         return av.VideoFrame.from_ndarray(img, format="bgr24")
-
 
 
 
