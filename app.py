@@ -33,6 +33,10 @@ MIN_FREQ = 3
 MAX_FREQ = 8
 
 STABILITY_HISTORY = 5
+MOTION_THRESHOLD = 2.0       # minimum pixel motion
+POWER_THRESHOLD = 15         # minimum FFT power
+SMOOTHING_WINDOW = 5
+MIN_SIGNAL_DURATION = 3      # seconds
 
 
 
@@ -101,6 +105,7 @@ class TremorProcessor(VideoProcessorBase):
         self.timestamps = deque()
 
         self.positions = deque()
+        self.magnitudes = deque()
 
         self.freq_history = deque(maxlen=STABILITY_HISTORY)
 
@@ -108,66 +113,51 @@ class TremorProcessor(VideoProcessorBase):
 
     def compute_tremor_frequency(self):
 
-        if len(self.positions) < 30:
+    if len(self.magnitudes) < 30:
+        return None, None
 
-            return None, None
+    signal = np.array(self.magnitudes)
 
+    # Smooth signal
+    if len(signal) > SMOOTHING_WINDOW:
+        kernel = np.ones(SMOOTHING_WINDOW) / SMOOTHING_WINDOW
+        signal = np.convolve(signal, kernel, mode='valid')
 
+    # Motion gate
+    avg_motion = np.mean(signal)
+    if avg_motion < MOTION_THRESHOLD:
+        return None, None
 
-        time_array = np.array(self.timestamps)
+    time_array = np.array(self.timestamps)[-len(signal):]
+    dt = np.mean(np.diff(time_array))
+    if dt <= 0:
+        return None, None
 
-        signal = np.array(self.positions)
+    signal = signal - np.mean(signal)
 
-        signal = signal - np.mean(signal)
+    yf = fft(signal)
+    xf = fftfreq(len(signal), dt)
 
+    positive_freqs = xf[:len(xf)//2]
+    magnitude = np.abs(yf[:len(yf)//2])
 
+    band_mask = (positive_freqs >= MIN_FREQ) & (positive_freqs <= MAX_FREQ)
+    if not np.any(band_mask):
+        return None, None
 
-        dt = np.mean(np.diff(time_array))
+    band_freqs = positive_freqs[band_mask]
+    band_magnitude = magnitude[band_mask]
 
-        if dt <= 0:
+    dominant_index = np.argmax(band_magnitude)
+    dominant_freq = band_freqs[dominant_index]
+    power = band_magnitude[dominant_index]
 
-            return None, None
+    if power < POWER_THRESHOLD:
+        return None, None
 
+    return dominant_freq, power
 
-
-        yf = fft(signal)
-
-        xf = fftfreq(len(signal), dt)
-
-
-
-        positive_freqs = xf[:len(xf)//2]
-
-        magnitude = np.abs(yf[:len(yf)//2])
-
-
-
-        band_mask = (positive_freqs >= MIN_FREQ) & (positive_freqs <= MAX_FREQ)
-
-        if not np.any(band_mask):
-
-            return None, None
-
-
-
-        band_freqs = positive_freqs[band_mask]
-
-        band_magnitude = magnitude[band_mask]
-
-
-
-        dominant_index = np.argmax(band_magnitude)
-
-        dominant_freq = band_freqs[dominant_index]
-
-        amplitude = band_magnitude[dominant_index]
-
-
-
-        return dominant_freq, amplitude
-
-
-
+    
     def compute_stability(self):
 
         if len(self.freq_history) < STABILITY_HISTORY:
@@ -180,20 +170,30 @@ class TremorProcessor(VideoProcessorBase):
 
 
 
-    def compute_risk(self, freq, amplitude, stability):
+    def compute_risk(self, freq, power, stability):
 
-        if freq is None:
+    if freq is None:
+        return 0
 
-            return 0
+    # Parkinson tremor typical band: 4–6 Hz
+    freq_score = 1 if 4 <= freq <= 6 else 0.3
 
-        freq_score = 1 if 4 <= freq <= 6 else 0.5
+    # Normalize power
+    power_score = min(power / 80, 1)
 
-        amp_score = min(amplitude / 50, 1)
+    total_score = (
+        (freq_score * 0.5) +
+        (power_score * 0.3) +
+        (stability * 0.2)
+    )
 
-        total_score = (freq_score * 0.4) + (amp_score * 0.3) + (stability * 0.3)
+    risk = round(total_score * 100, 1)
 
-        return round(total_score * 100, 1)
+    # Final safety gate
+    if risk < 40:
+        return 0
 
+    return risk
 
 
     def recv(self, frame):
@@ -262,7 +262,13 @@ class TremorProcessor(VideoProcessorBase):
 
 
 
-                self.positions.append(x)
+                self.positions.append((x, y))
+
+                if len(self.positions) > 1:
+                    dx = self.positions[-1][0] - self.positions[-2][0]
+                    dy = self.positions[-1][1] - self.positions[-2][1]
+                    magnitude = np.sqrt(dx**2 + dy**2)
+                    self.magnitudes.append(magnitude)
 
                 self.timestamps.append(current_time)
 
