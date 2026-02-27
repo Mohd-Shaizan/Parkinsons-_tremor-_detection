@@ -58,21 +58,31 @@ rtc_configuration = RTCConfiguration(
 
 st.set_page_config(page_title="NeuroScan AI", layout="wide")
 
-st.title("NeuroScan AI - Micro Tremor Quantification System")
-
-
 
 st.markdown("""
+    <h1 style='text-align: center; font-size: 60px;'>NeuroScan AI - Micro Tremor Quantification System</h1>
+    """, unsafe_allow_html=True)
 
-This system tracks fingertip micro-movements in real time and analyzes tremor frequency & rhythmic stability.
+st.markdown("""
+    <div style='text-align: center; font-size: 24px;'>
+        <p>This system tracks fingertip micro-movements in real time and analyzes tremor frequency & rhythmic stability.</p>
+        <p>This is a Research Prototype — Not a Medical Diagnosis Tool.</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-
-
-⚠ Research Prototype — Not a Medical Diagnosis Tool.
-
-""")
-
-
+st.markdown("""
+    <style>
+    /* This targets the iframe containing the webcam */
+    .element-container iframe {
+        width: 600px !important;
+        height: 450px !important;
+        display: block;
+        margin-left: auto;
+        margin-right: auto;
+        border-radius: 10px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 # ==============================
 
@@ -268,14 +278,20 @@ class TremorProcessor(VideoProcessorBase):
 
 # ==============================
 
+col1, col2, col3 = st.columns([1, 2, 1]) 
 
+with col2:
+    webrtc_streamer(
+        key="neuroscan",
+        video_processor_factory=TremorProcessor,
+        rtc_configuration=rtc_configuration,
+  media_stream_constraints={
+    "video": {
+        "width": {"ideal": 940},
+        "height": {"ideal": 580},
+        "frameRate": {"ideal": 60}
+    },
+    "audio": False, },
+        async_processing=True,
+    )
 
-webrtc_streamer(
-
-    key="neuroscan",
-
-    video_processor_factory=TremorProcessor,
-
-    rtc_configuration=rtc_configuration,
-
-)
