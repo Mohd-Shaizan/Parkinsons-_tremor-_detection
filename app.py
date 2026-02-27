@@ -11,58 +11,63 @@ import av
 # ==============================
 # CONFIG
 # ==============================
-
-WINDOW_DURATION = 5
-MIN_FREQ = 3
-MAX_FREQ = 8
-STABILITY_HISTORY = 5
+WINDOW_DURATION = 4      # Slightly shorter window for faster response
+MIN_FREQ = 3.5           # Pathological tremors usually start above 3.5Hz
+MAX_FREQ = 7.5
+STABILITY_HISTORY = 10   # Longer history for better stability average
+AMP_THRESHOLD = 5.0      # CRITICAL: Ignore anything below this movement magnitude
 
 rtc_configuration = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
 
-# ==============================
-# STREAMLIT UI
-# ==============================
+st.set_page_config(page_title="NeuroScan AI Pro", layout="wide")
 
-st.set_page_config(page_title="NeuroScan AI", layout="wide")
-st.title("Micro Tremor Quantification System")
-
+# CSS to control the camera container size
 st.markdown("""
-This system tracks fingertip micro-movements in real time  
-and analyzes tremor frequency & rhythmic stability.
+    <style>
+    .element-container iframe {
+        width: 640px !important;
+        height: 480px !important;
+        border-radius: 15px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
-⚠ Research Prototype — Not a Medical Diagnosis Tool.
-""")
-
-# ==============================
-# VIDEO PROCESSOR
-# ==============================
+st.title("🧠 NeuroScan AI - Refined Tremor Analysis")
 
 class TremorProcessor(VideoProcessorBase):
-
     def __init__(self):
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
             max_num_hands=1,
-            min_detection_confidence=0.7,
-            min_tracking_confidence=0.7
+            min_detection_confidence=0.8, # Higher confidence for better accuracy
+            min_tracking_confidence=0.8
         )
         self.timestamps = deque()
         self.positions = deque()
         self.freq_history = deque(maxlen=STABILITY_HISTORY)
 
     def compute_tremor_frequency(self):
-        if len(self.positions) < 30:
+        if len(self.positions) < 40: # Need more points for accurate FFT
             return None, None
 
         time_array = np.array(self.timestamps)
         signal = np.array(self.positions)
+        
+        # Simple noise reduction: Moving Average
+        signal = np.convolve(signal, np.ones(3)/3, mode='valid')
+        time_array = time_array[2:] 
+
+        # Remove DC Offset
         signal = signal - np.mean(signal)
 
+        # Standard deviation check: if the hand is very still, don't run FFT
+        if np.std(signal) < 1.5: 
+            return 0, 0
+
         dt = np.mean(np.diff(time_array))
-        if dt <= 0:
-            return None, None
+        if dt <= 0: return None, None
 
         yf = fft(signal)
         xf = fftfreq(len(signal), dt)
@@ -71,111 +76,83 @@ class TremorProcessor(VideoProcessorBase):
         magnitude = np.abs(yf[:len(yf)//2])
 
         band_mask = (positive_freqs >= MIN_FREQ) & (positive_freqs <= MAX_FREQ)
-        if not np.any(band_mask):
-            return None, None
+        if not np.any(band_mask): return 0, 0
 
         band_freqs = positive_freqs[band_mask]
         band_magnitude = magnitude[band_mask]
 
-        dominant_index = np.argmax(band_magnitude)
-        dominant_freq = band_freqs[dominant_index]
-        amplitude = band_magnitude[dominant_index]
+        dom_idx = np.argmax(band_magnitude)
+        dominant_freq = band_freqs[dom_idx]
+        amplitude = band_magnitude[dom_idx]
 
         return dominant_freq, amplitude
 
-    def compute_stability(self):
-        if len(self.freq_history) < STABILITY_HISTORY:
-            return 0
-        std_dev = np.std(self.freq_history)
-        return max(0, 1 - (std_dev / 2))
-
     def compute_risk(self, freq, amplitude, stability):
-        if freq is None:
-            return 0
-        freq_score = 1 if 4 <= freq <= 6 else 0.5
-        amp_score = min(amplitude / 50, 1)
-        total_score = (freq_score * 0.4) + (amp_score * 0.3) + (stability * 0.3)
-        return round(total_score * 100, 1)
+        # LOGIC REFINEMENT:
+        # 1. If amplitude is low, risk is 0.
+        if amplitude < AMP_THRESHOLD or freq == 0:
+            return 0.0
+        
+        # 2. Pathological tremors are very "Stable" (rhythmic). 
+        # If stability is low, it's likely just random voluntary movement.
+        if stability < 0.6:
+            return round((amplitude / 100) * 10, 1) # Low risk for erratic movement
+
+        # 3. Frequency weighting (Parkinsonian rest tremors are typically 4-6Hz)
+        freq_weight = 1.0 if 4.0 <= freq <= 6.0 else 0.4
+        
+        risk = (freq_weight * 40) + (min(amplitude/2, 40)) + (stability * 20)
+        return round(min(risk, 99.9), 1)
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
         img = cv2.flip(img, 1)
+        h, w, _ = img.shape
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
         results = self.hands.process(rgb)
         current_time = time.time()
 
         if results.multi_hand_landmarks:
-            for hand_landmarks in results.multi_hand_landmarks:
-                h, w, _ = img.shape
+            hand_landmarks = results.multi_hand_landmarks[0]
+            index_tip = hand_landmarks.landmark[8]
+            # Convert normalized to pixel coordinates
+            ix, iy = int(index_tip.x * w), int(index_tip.y * h)
+            
+            self.positions.append(iy) # Track vertical tremor (usually more distinct)
+            self.timestamps.append(current_time)
+            
+            # Draw tracking dot
+            cv2.circle(img, (ix, iy), 8, (0, 255, 255), -1)
 
-                # Draw edges
-                for connection in self.mp_hands.HAND_CONNECTIONS:
-                    start_idx, end_idx = connection
-                    x1 = int(hand_landmarks.landmark[start_idx].x * w)
-                    y1 = int(hand_landmarks.landmark[start_idx].y * h)
-                    x2 = int(hand_landmarks.landmark[end_idx].x * w)
-                    y2 = int(hand_landmarks.landmark[end_idx].y * h)
-                    cv2.line(img, (x1, y1), (x2, y2), (0, 255, 180), 2)
-
-                # Draw vertices
-                for idx, lm in enumerate(hand_landmarks.landmark):
-                    x = int(lm.x * w)
-                    y = int(lm.y * h)
-                    cv2.circle(img, (x, y), 5, (0, 255, 255), -1)
-
-                # Track index fingertip
-                index_tip = hand_landmarks.landmark[8]
-                x = int(index_tip.x * w)
-                y = int(index_tip.y * h)
-                cv2.circle(img, (x, y), 10, (255, 255, 0), -1)
-
-                self.positions.append(x)
-                self.timestamps.append(current_time)
-
-        # Maintain sliding window
+        # Window maintenance
         while self.timestamps and (current_time - self.timestamps[0]) > WINDOW_DURATION:
             self.timestamps.popleft()
             self.positions.popleft()
 
-        freq, amplitude = self.compute_tremor_frequency()
+        freq, amp = self.compute_tremor_frequency()
+        if freq and freq > 0: self.freq_history.append(freq)
+        
+        # Stability Calculation
+        stability = 0
+        if len(self.freq_history) >= 5:
+            std = np.std(self.freq_history)
+            stability = max(0, 1 - (std / 1.5))
 
-        if freq:
-            self.freq_history.append(freq)
+        risk = self.compute_risk(freq, amp if amp else 0, stability)
 
-        stability = self.compute_stability()
-        risk = self.compute_risk(freq, amplitude if amplitude else 0, stability)
-
-        # Futuristic Panel
-        overlay = img.copy()
-        cv2.rectangle(overlay, (20, 20), (480, 240), (20, 20, 20), -1)
-        cv2.addWeighted(overlay, 0.85, img, 0.15, 0, img)
-
-        neon = (0, 255, 200)
-        cv2.putText(img, "NEUROSCAN AI", (40, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, neon, 2)
-
-        freq_text = f"Frequency: {freq:.2f} Hz" if freq else "Frequency: --"
-        amp_text = f"Amplitude: {amplitude:.2f}" if amplitude else "Amplitude: --"
-
-        cv2.putText(img, freq_text, (40, 100),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,255,255), 1)
-        cv2.putText(img, amp_text, (40, 130),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,255,255), 1)
-        cv2.putText(img, f"Stability: {round(stability,2)}", (40, 160),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,255,255), 1)
-        cv2.putText(img, f"Risk Index: {risk}%", (40, 200),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, neon, 2)
+        # UI Panel
+        cv2.rectangle(img, (10, 10), (320, 160), (30, 30, 30), -1)
+        color = (0, 255, 0) if risk < 30 else (0, 165, 255) if risk < 70 else (0, 0, 255)
+        
+        cv2.putText(img, f"Freq: {freq:.1f}Hz" if freq else "Scanning...", (20, 40), 1, 1.2, (255,255,255), 2)
+        cv2.putText(img, f"Stability: {stability:.2f}", (20, 75), 1, 1.1, (255,255,255), 1)
+        cv2.putText(img, f"RISK: {risk}%", (20, 130), 1, 1.8, color, 3)
 
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-
-# ==============================
-# WEBRTC STREAM
-# ==============================
-
 webrtc_streamer(
-    key="neuroscan",
+    key="neuroscan-refined",
     video_processor_factory=TremorProcessor,
     rtc_configuration=rtc_configuration,
+    media_stream_constraints={"video": True, "audio": False},
 )
