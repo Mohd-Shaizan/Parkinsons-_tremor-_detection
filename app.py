@@ -74,8 +74,8 @@ st.markdown("""
     <style>
     /* This targets the iframe containing the webcam */
     .element-container iframe {
-        width: 600px !important;
-        height: 450px !important;
+        width: 800px !important;
+        height: 550px !important;
         display: block;
         margin-left: auto;
         margin-right: auto;
