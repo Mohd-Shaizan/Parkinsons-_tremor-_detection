@@ -113,49 +113,49 @@ class TremorProcessor(VideoProcessorBase):
 
     def compute_tremor_frequency(self):
 
-    if len(self.magnitudes) < 30:
-        return None, None
+        if len(self.magnitudes) < 30:
+            return None, None
 
-    signal = np.array(self.magnitudes)
+        signal = np.array(self.magnitudes)
 
     # Smooth signal
-    if len(signal) > SMOOTHING_WINDOW:
-        kernel = np.ones(SMOOTHING_WINDOW) / SMOOTHING_WINDOW
-        signal = np.convolve(signal, kernel, mode='valid')
+        if len(signal) > SMOOTHING_WINDOW:
+            kernel = np.ones(SMOOTHING_WINDOW) / SMOOTHING_WINDOW
+            signal = np.convolve(signal, kernel, mode='valid')
 
     # Motion gate
-    avg_motion = np.mean(signal)
-    if avg_motion < MOTION_THRESHOLD:
-        return None, None
+        avg_motion = np.mean(signal)
+        if avg_motion < MOTION_THRESHOLD:
+            return None, None
 
-    time_array = np.array(self.timestamps)[-len(signal):]
-    dt = np.mean(np.diff(time_array))
-    if dt <= 0:
-        return None, None
+        time_array = np.array(self.timestamps)[-len(signal):]
+        dt = np.mean(np.diff(time_array))
+        if dt <= 0:
+            return None, None
 
-    signal = signal - np.mean(signal)
+        signal = signal - np.mean(signal)
 
-    yf = fft(signal)
-    xf = fftfreq(len(signal), dt)
+        yf = fft(signal)
+        xf = fftfreq(len(signal), dt)
 
-    positive_freqs = xf[:len(xf)//2]
-    magnitude = np.abs(yf[:len(yf)//2])
+        positive_freqs = xf[:len(xf)//2]
+        magnitude = np.abs(yf[:len(yf)//2])
 
-    band_mask = (positive_freqs >= MIN_FREQ) & (positive_freqs <= MAX_FREQ)
-    if not np.any(band_mask):
-        return None, None
+        band_mask = (positive_freqs >= MIN_FREQ) & (positive_freqs <= MAX_FREQ)
+        if not np.any(band_mask):
+            return None, None
 
-    band_freqs = positive_freqs[band_mask]
-    band_magnitude = magnitude[band_mask]
+        band_freqs = positive_freqs[band_mask]
+        band_magnitude = magnitude[band_mask]
 
-    dominant_index = np.argmax(band_magnitude)
-    dominant_freq = band_freqs[dominant_index]
-    power = band_magnitude[dominant_index]
+        dominant_index = np.argmax(band_magnitude)
+        dominant_freq = band_freqs[dominant_index]
+        power = band_magnitude[dominant_index]
 
-    if power < POWER_THRESHOLD:
-        return None, None
+        if power < POWER_THRESHOLD:
+            return None, None
 
-    return dominant_freq, power
+        return dominant_freq, power
 
     
     def compute_stability(self):
