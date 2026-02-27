@@ -137,11 +137,15 @@ class TremorProcessor(VideoProcessorBase):
 st.title("NeuroScan AI")
 st.caption("Research Prototype — Not a Medical Diagnosis Tool")
 
-col1, col2 = st.columns([3, 1])
+RTC_CONFIGURATION = {
+    "iceServers": [
+        {"urls": ["stun:stun.l.google.com:19302"]},
+    ]
+}
 
-with col1:
-    webrtc_streamer(
-        key="camera",
-        video_processor_factory=TremorProcessor,
-        media_stream_constraints={"video": True, "audio": False},
-    )
+webrtc_streamer(
+    key="camera",
+    video_processor_factory=TremorProcessor,
+    rtc_configuration=RTC_CONFIGURATION,
+    media_stream_constraints={"video": True, "audio": False},
+)
