@@ -170,7 +170,7 @@ class TremorProcessor(VideoProcessorBase):
 
 
 
-    def compute_risk(self, freq, power, stability):
+def compute_risk(self, freq, power, stability):
 
     if freq is None:
         return 0
