@@ -26,7 +26,7 @@ rtc_configuration = RTCConfiguration(
 # ==============================
 
 st.set_page_config(page_title="NeuroScan AI", layout="wide")
-st.title("🧠 NeuroScan AI - Micro Tremor Quantification System")
+st.title("Micro Tremor Quantification System")
 
 st.markdown("""
 This system tracks fingertip micro-movements in real time  
