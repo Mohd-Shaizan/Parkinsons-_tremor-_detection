@@ -8,6 +8,10 @@ from collections import deque
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 import av
 
+# DIRECT MODULE IMPORTS (Fixes the AttributeError)
+from mediapipe.python.solutions import hands as mp_hands
+from mediapipe.python.solutions import drawing_utils as mp_drawing
+
 # ==============================
 # CONFIG
 # ==============================
@@ -32,7 +36,7 @@ st.markdown("""
 This system tracks fingertip micro-movements in real time  
 and analyzes tremor frequency & rhythmic stability.
 
-⚠ Research Prototype — Not a Medical Diagnosis Tool.
+**⚠ Research Prototype — Not a Medical Diagnosis Tool.**
 """)
 
 # ==============================
@@ -40,10 +44,9 @@ and analyzes tremor frequency & rhythmic stability.
 # ==============================
 
 class TremorProcessor(VideoProcessorBase):
-
     def __init__(self):
-        self.mp_hands = mp.solutions.hands
-        self.hands = self.mp_hands.Hands(
+        # Using the direct import to prevent 'module has no attribute solutions'
+        self.hands = mp_hands.Hands(
             max_num_hands=1,
             min_detection_confidence=0.7,
             min_tracking_confidence=0.7
@@ -109,22 +112,16 @@ class TremorProcessor(VideoProcessorBase):
             for hand_landmarks in results.multi_hand_landmarks:
                 h, w, _ = img.shape
 
-                # Draw edges
-                for connection in self.mp_hands.HAND_CONNECTIONS:
-                    start_idx, end_idx = connection
-                    x1 = int(hand_landmarks.landmark[start_idx].x * w)
-                    y1 = int(hand_landmarks.landmark[start_idx].y * h)
-                    x2 = int(hand_landmarks.landmark[end_idx].x * w)
-                    y2 = int(hand_landmarks.landmark[end_idx].y * h)
-                    cv2.line(img, (x1, y1), (x2, y2), (0, 255, 180), 2)
+                # Use direct drawing utils
+                mp_drawing.draw_landmarks(
+                    img, 
+                    hand_landmarks, 
+                    mp_hands.HAND_CONNECTIONS,
+                    mp_drawing.DrawingSpec(color=(0, 255, 255), thickness=2, circle_radius=2),
+                    mp_drawing.DrawingSpec(color=(0, 255, 180), thickness=2)
+                )
 
-                # Draw vertices
-                for idx, lm in enumerate(hand_landmarks.landmark):
-                    x = int(lm.x * w)
-                    y = int(lm.y * h)
-                    cv2.circle(img, (x, y), 5, (0, 255, 255), -1)
-
-                # Track index fingertip
+                # Track index fingertip (Landmark 8)
                 index_tip = hand_landmarks.landmark[8]
                 x = int(index_tip.x * w)
                 y = int(index_tip.y * h)
@@ -146,7 +143,7 @@ class TremorProcessor(VideoProcessorBase):
         stability = self.compute_stability()
         risk = self.compute_risk(freq, amplitude if amplitude else 0, stability)
 
-        # Futuristic Panel
+        # UI Overlay
         overlay = img.copy()
         cv2.rectangle(overlay, (20, 20), (480, 240), (20, 20, 20), -1)
         cv2.addWeighted(overlay, 0.85, img, 0.15, 0, img)
@@ -169,7 +166,6 @@ class TremorProcessor(VideoProcessorBase):
 
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-
 # ==============================
 # WEBRTC STREAM
 # ==============================
@@ -178,4 +174,5 @@ webrtc_streamer(
     key="neuroscan",
     video_processor_factory=TremorProcessor,
     rtc_configuration=rtc_configuration,
+    media_stream_constraints={"video": True, "audio": False},
 )
