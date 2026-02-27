@@ -173,9 +173,11 @@ class TremorProcessor(VideoProcessorBase):
 # ==============================
 # WEBRTC STREAM
 # ==============================
+col1, col2 = st.columns([2,1])
 
-webrtc_streamer(
-    key="neuroscan",
-    video_processor_factory=TremorProcessor,
-    rtc_configuration=rtc_configuration,
-)
+with col1:
+    webrtc_streamer(
+        key="camera",
+        video_frame_callback=video_frame_callback,
+        media_stream_constraints={"video": True, "audio": False}
+    )
