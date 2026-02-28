@@ -291,7 +291,7 @@ with col2:
     "video": {
         "width": {"ideal": 940},
         "height": {"ideal": 580},
-        "frameRate": {"ideal": 60}
+        "frameRate": {"ideal": 20}
     },
     "audio": False, },
         async_processing=True,
