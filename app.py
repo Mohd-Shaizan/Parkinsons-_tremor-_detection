@@ -97,9 +97,11 @@ class TremorProcessor(VideoProcessorBase):
     def __init__(self):
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
+            static_image_mode=False,        # Faster for video
             max_num_hands=1,
-            min_detection_confidence=0.7,
-            min_tracking_confidence=0.7
+            min_detection_confidence=0.5,   # Lowered slightly for speed
+            min_tracking_confidence=0.5,    # Lowered slightly for speed
+            model_complexity=0              # CRITICAL: Use 0 for CPU/Cloud stability
         )
 
         self.timestamps = deque()
